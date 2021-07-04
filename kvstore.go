@@ -140,13 +140,21 @@ type readTx struct {
 }
 
 func (rtx *readTx) Commit() error {
-	rtx.store.m.RUnlock()
+	if rtx.store != nil {
+		rtx.store.m.RUnlock()
+		rtx.store = nil
 
-	return nil
+		return nil
+	}
+
+	return errors.New("transaction rolled back")
 }
 
 func (rtx *readTx) Rollback() error {
-	rtx.store.m.RUnlock()
+	if rtx.store != nil {
+		rtx.store.m.RUnlock()
+		rtx.store = nil
+	}
 
 	return nil
 }
@@ -200,15 +208,19 @@ func (st *store) Writer() WriteTx {
 }
 
 type writeTx struct {
-	store *store
+	m *sync.RWMutex
 
-	m           *sync.RWMutex
+	store       *store
 	writeCache  map[string]map[string]json.RawMessage
 	deleteCache map[string]map[string]bool
 }
 
 func (wtx *writeTx) Commit() error {
 	wtx.m.Lock()
+	if wtx.store == nil {
+		wtx.m.Unlock()
+		return errors.New("transaction rolled back")
+	}
 	defer wtx.m.Unlock()
 	defer wtx.store.m.Unlock()
 
@@ -220,6 +232,7 @@ func (wtx *writeTx) Commit() error {
 			}
 			err := wtx.write(name, k, v)
 			if err != nil {
+				wtx.store = nil
 				return err
 			}
 		}
@@ -237,10 +250,13 @@ func (wtx *writeTx) Commit() error {
 			}
 			err := m.Delete([]byte(k))
 			if err != nil {
+				wtx.store = nil
 				return err
 			}
 		}
 	}
+
+	wtx.store = nil
 
 	return nil
 }
@@ -268,7 +284,11 @@ func (wtx *writeTx) write(bucket, key string, payload json.RawMessage) error {
 }
 
 func (wtx *writeTx) Rollback() error {
-	wtx.store.m.Unlock()
+	wtx.m.Lock()
+	if wtx.store != nil {
+		wtx.store.m.Unlock()
+		wtx.store = nil
+	}
 
 	return nil
 }
