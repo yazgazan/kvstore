@@ -17,6 +17,7 @@ var ErrKeyNotFound = errors.New("key not found")
 type Store interface {
 	io.Closer
 
+	Buckets() ([]string, error)
 	Reader() ReadTx
 	Writer() WriteTx
 	Get(bucket, key string, dst interface{}) error
@@ -68,7 +69,10 @@ func New(f io.ReadWriteSeeker) (Store, error) {
 		return nil, err
 	}
 
-	obj, err := db.Create("objects")
+	obj, err := db.Open("objects")
+	if errors.Is(err, os.ErrNotExist) {
+		obj, err = db.Create("objects")
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -76,12 +80,39 @@ func New(f io.ReadWriteSeeker) (Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	buckets := map[string]*container.HashMap{}
+
+	var rangeError error
+	err = bucketsMap.Range(func(keyBytes, pathBytes []byte) bool {
+		key := string(keyBytes)
+
+		obj, err := db.Open(string(pathBytes))
+		if err != nil {
+			rangeError = err
+			return false
+		}
+		m, err := container.NewHashMap(obj)
+		if err != nil {
+			rangeError = err
+			return false
+		}
+
+		buckets[key] = m
+
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+	if rangeError != nil {
+		return nil, rangeError
+	}
 
 	st := &store{
 		db: db,
 
 		m:          &sync.RWMutex{},
-		buckets:    map[string]*container.HashMap{},
+		buckets:    buckets,
 		bucketsMap: bucketsMap,
 	}
 
@@ -110,6 +141,18 @@ func (st *store) Close() error {
 	}
 
 	return st.closer.Close()
+}
+
+func (st *store) Buckets() ([]string, error) {
+	st.m.Lock()
+	defer st.m.Unlock()
+
+	buckets := make([]string, 0, len(st.buckets))
+	for name := range st.buckets {
+		buckets = append(buckets, name)
+	}
+
+	return buckets, nil
 }
 
 func (st *store) Get(bucket, key string, dst interface{}) error {
@@ -157,8 +200,7 @@ func (rtx *readTx) Rollback() error {
 }
 
 func (rtx *readTx) Get(bucket, key string, dst interface{}) error {
-	p := bucketPath(bucket)
-	m, ok := rtx.store.buckets[p]
+	m, ok := rtx.store.buckets[bucket]
 	if !ok {
 		return nil
 	}
@@ -174,8 +216,7 @@ func (rtx *readTx) Get(bucket, key string, dst interface{}) error {
 }
 
 func (rtx *readTx) List(bucket string) ([]string, error) {
-	p := bucketPath(bucket)
-	m, ok := rtx.store.buckets[p]
+	m, ok := rtx.store.buckets[bucket]
 	if !ok {
 		return nil, nil
 	}
