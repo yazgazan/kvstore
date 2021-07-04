@@ -12,10 +12,7 @@ import (
 	"github.com/yazgazan/kvstore/container"
 )
 
-var (
-	ErrBucketNotFound = errors.New("bucket not found")
-	ErrKeyNotFound    = errors.New("key not found")
-)
+var ErrKeyNotFound = errors.New("key not found")
 
 type Store interface {
 	io.Closer
@@ -163,7 +160,7 @@ func (rtx *readTx) Get(bucket, key string, dst interface{}) error {
 	p := bucketPath(bucket)
 	m, ok := rtx.store.buckets[p]
 	if !ok {
-		return ErrBucketNotFound
+		return nil
 	}
 	b, ok, err := m.Load([]byte(key))
 	if err != nil {
@@ -180,7 +177,7 @@ func (rtx *readTx) List(bucket string) ([]string, error) {
 	p := bucketPath(bucket)
 	m, ok := rtx.store.buckets[p]
 	if !ok {
-		return nil, ErrBucketNotFound
+		return nil, nil
 	}
 
 	keys := []string{}
@@ -315,7 +312,7 @@ func (wtx *writeTx) Get(bucket, key string, dst interface{}) error {
 	p := bucketPath(bucket)
 	m, ok := wtx.store.buckets[p]
 	if !ok {
-		return ErrBucketNotFound
+		return nil
 	}
 	b, ok, err := m.Load([]byte(key))
 	if err != nil {
@@ -332,7 +329,7 @@ func (wtx *writeTx) List(bucket string) ([]string, error) {
 	p := bucketPath(bucket)
 	m, ok := wtx.store.buckets[p]
 	if !ok {
-		return nil, ErrBucketNotFound
+		return nil, nil
 	}
 
 	var deletedKeys []string
